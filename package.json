@@ -1,0 +1,13 @@
+{
+  "name": "epic-buddy",
+  "version": "1.0.0",
+  "description": "Force your Claude Code buddy companion - pick your legendary",
+  "type": "module",
+  "bin": {
+    "epic-buddy": "./src/cli.mjs"
+  },
+  "files": [
+    "src/"
+  ],
+  "license": "MIT"
+}
