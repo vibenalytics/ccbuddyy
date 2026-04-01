@@ -88,18 +88,35 @@ function findClaudeBinary() {
     );
   }
 
+  // 9. WSL - check Windows-side Claude Code install via /mnt/c
+  if (os === 'linux' && existsSync('/mnt/c/Windows')) {
+    try {
+      const winUser = execSync('cmd.exe /c "echo %USERNAME%" 2>/dev/null', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+      if (winUser && winUser !== '%USERNAME%') {
+        const winHome = `/mnt/c/Users/${winUser}`;
+        candidates.push(
+          join(winHome, '.local', 'bin', 'claude.exe'),
+          join(winHome, 'AppData', 'Local', 'Microsoft', 'WinGet', 'Links', 'claude.exe'),
+          join(winHome, 'AppData', 'Local', 'Programs', 'claude-code', 'claude.exe'),
+          join(winHome, 'AppData', 'Roaming', 'npm', 'claude.cmd'),
+          join(winHome, 'AppData', 'Roaming', 'npm', 'claude'),
+        );
+      }
+    } catch {}
+  }
+
   for (const p of candidates) {
     if (existsSync(p)) return resolveSymlink(p);
   }
 
-  // 9. Fall back to `which claude` / `where claude`
+  // 10. Fall back to `which claude` / `where claude`
   try {
     const cmd = os === 'win32' ? 'where claude' : 'which claude';
     const result = execSync(cmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
     if (result && existsSync(result)) return resolveSymlink(result);
   } catch {}
 
-  // 10. Check versioned installs directly (XDG-aware)
+  // 11. Check versioned installs directly (XDG-aware)
   const versionsDir = join(xdgData(), 'claude', 'versions');
   if (existsSync(versionsDir)) {
     try {
