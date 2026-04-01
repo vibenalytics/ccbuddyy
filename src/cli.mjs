@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { rollWithSalt, searchSync, STAT_NAMES, RARITY_STARS, ORIGINAL_SALT } from './companion.mjs';
+import { rollWithSalt, searchSync, buildSearch, estimateDifficulty, STAT_NAMES, RARITY_STARS, ORIGINAL_SALT, SPECIES, EYES, HATS, RARITIES } from './companion.mjs';
 import { getUserId, getCurrentSalt, patch, restore } from './patcher.mjs';
 import { createInterface } from 'readline';
 
@@ -404,12 +404,109 @@ async function cmdSeed(salt) {
   console.log(`\n  ${BOLD}Patched!${RESET} Restart Claude Code and run ${BOLD}/buddy${RESET}`);
 }
 
+const EYE_NAME_MAP = { dot: '·', star: '\u2726', x: '\u00d7', circle: '\u25c9', at: '@', degree: '\u00b0',
+  '·': '·', '\u2726': '\u2726', '\u00d7': '\u00d7', '\u25c9': '\u25c9', '@': '@', '\u00b0': '\u00b0' };
+
+function parseFlag(args, flag) {
+  const idx = args.indexOf(flag);
+  if (idx === -1 || idx + 1 >= args.length) return null;
+  return args[idx + 1];
+}
+
+async function cmdBuild(args) {
+  const userId = getUserId();
+  if (!userId) { console.error('  Could not read ~/.claude.json'); process.exit(1); }
+
+  const spec = {};
+  const species = parseFlag(args, '-species');
+  const rarity = parseFlag(args, '-rarity');
+  const eye = parseFlag(args, '-eye');
+  const hat = parseFlag(args, '-hat');
+  const shiny = args.includes('-shiny');
+
+  if (species) {
+    if (!SPECIES.includes(species)) { console.error(`  Unknown species: ${species}\n  Available: ${SPECIES.join(', ')}`); process.exit(1); }
+    spec.species = species;
+  }
+  if (rarity) {
+    if (!RARITIES.includes(rarity)) { console.error(`  Unknown rarity: ${rarity}\n  Available: ${RARITIES.join(', ')}`); process.exit(1); }
+    spec.rarity = rarity;
+  }
+  if (eye) {
+    const resolved = EYE_NAME_MAP[eye];
+    if (!resolved) { console.error(`  Unknown eye: ${eye}\n  Available: dot, star, x, circle, at, degree`); process.exit(1); }
+    spec.eye = resolved;
+  }
+  if (hat) {
+    if (!HATS.includes(hat)) { console.error(`  Unknown hat: ${hat}\n  Available: ${HATS.join(', ')}`); process.exit(1); }
+    spec.hat = hat;
+  }
+  if (shiny) spec.shiny = true;
+
+  if (Object.keys(spec).length === 0) {
+    console.error('  Specify at least one: -species, -rarity, -eye, -hat, -shiny');
+    process.exit(1);
+  }
+
+  // Estimate difficulty
+  const { odds, expectedIterations } = estimateDifficulty(spec);
+  const parts = [];
+  if (spec.rarity) parts.push(RARITY_COLORS[spec.rarity] + spec.rarity + RESET);
+  if (spec.species) parts.push(BOLD + spec.species + RESET);
+  if (spec.eye) parts.push('eye:' + spec.eye);
+  if (spec.hat) parts.push('hat:' + spec.hat);
+  if (spec.shiny) parts.push('\x1b[33m\u2728 shiny\x1b[0m');
+
+  console.log();
+  console.log(`  ${BOLD}Target:${RESET} ${parts.join(' ')}`);
+  console.log(`  ${DIM}Odds per roll: 1 in ${expectedIterations.toLocaleString()} (${(odds * 100).toFixed(4)}%)${RESET}`);
+
+  if (odds === 0) {
+    console.error(`\n  ${BOLD}Impossible combination${RESET} (common companions cannot have hats)`);
+    process.exit(1);
+  }
+
+  const maxIter = Math.max(expectedIterations * 20, 10_000_000);
+  console.log(`  ${DIM}Searching up to ${(maxIter / 1_000_000).toFixed(0)}M iterations...${RESET}\n`);
+
+  const { results, totalIterations, elapsed } = buildSearch(userId, spec, 5, maxIter);
+
+  if (results.length === 0) {
+    console.log(`  No match found in ${totalIterations.toLocaleString()} iterations (${(elapsed / 1000).toFixed(1)}s)`);
+    console.log(`  ${DIM}Try removing some constraints${RESET}`);
+    process.exit(1);
+  }
+
+  // Show results with benchmarks
+  console.log(`  ${BOLD}Found ${results.length} match${results.length > 1 ? 'es' : ''}${RESET}\n`);
+  results.forEach((r, i) => {
+    printCard2(r, i + 1);
+    console.log(`      ${DIM}found after ${r.iterations.toLocaleString()} iterations (${(r.elapsed / 1000).toFixed(1)}s)${RESET}`);
+  });
+
+  console.log();
+  console.log(`  ${DIM}avg: ${Math.round(results.reduce((s, r) => s + r.iterations, 0) / results.length).toLocaleString()} iterations/match${RESET}`);
+  console.log(`  ${DIM}expected: ~${expectedIterations.toLocaleString()} iterations/match${RESET}`);
+  console.log(`  ${DIM}speed: ${Math.round(totalIterations / (elapsed / 1000)).toLocaleString()} rolls/sec${RESET}`);
+  console.log();
+
+  const answer = await ask(`  Pick one to apply (1-${results.length}) or 'n' to skip: `);
+  if (answer.toLowerCase() === 'n' || answer === '') return;
+  const idx = parseInt(answer) - 1;
+  if (idx < 0 || idx >= results.length) { console.log('  Invalid.'); return; }
+
+  patch(results[idx].salt);
+  console.log(`\n  ${BOLD}Patched!${RESET} Restart Claude Code and run ${BOLD}/buddy${RESET}`);
+}
+
 // --- Entry point ---
 
 const args = process.argv.slice(2);
 const cmd = args[0];
 
-if (cmd === 'search' && args[1]) {
+if (cmd === 'build') {
+  await cmdBuild(args.slice(1));
+} else if (cmd === 'search' && args[1]) {
   await cmdSearch(args.slice(1).join(' '));
 } else if (cmd === '--seed' && args[1]) {
   await cmdSeed(args[1]);

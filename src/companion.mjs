@@ -95,6 +95,48 @@ export function matches(roll, terms) {
   });
 }
 
+export function buildSearch(userId, spec, maxResults = 5, maxIterations = 50_000_000) {
+  const saltLen = ORIGINAL_SALT.length;
+  const chars = '0123456789abcdef';
+  const results = [];
+  const start = Date.now();
+
+  for (let i = 0; i < maxIterations && results.length < maxResults; i++) {
+    let salt = '';
+    for (let j = 0; j < saltLen; j++) {
+      salt += chars[Math.floor(Math.random() * chars.length)];
+    }
+    const roll = rollWithSalt(userId, salt);
+
+    if (spec.species && roll.species !== spec.species) continue;
+    if (spec.rarity && roll.rarity !== spec.rarity) continue;
+    if (spec.eye && roll.eye !== spec.eye) continue;
+    if (spec.hat && roll.hat !== spec.hat) continue;
+    if (spec.shiny && !roll.shiny) continue;
+
+    results.push({ ...roll, iterations: i + 1, elapsed: Date.now() - start });
+
+    if (i > 0 && i % 1_000_000 === 0 && results.length < maxResults) {
+      process.stderr.write(`  searched ${(i / 1_000_000).toFixed(0)}M so far (${results.length} found)...\n`);
+    }
+  }
+
+  return { results, totalIterations: results.length > 0 ? results[results.length - 1].iterations : maxIterations, elapsed: Date.now() - start };
+}
+
+export function estimateDifficulty(spec) {
+  let odds = 1;
+  if (spec.rarity) odds *= RARITY_WEIGHTS[spec.rarity] / 100;
+  if (spec.species) odds *= 1 / SPECIES.length;
+  if (spec.eye) odds *= 1 / EYES.length;
+  if (spec.hat) {
+    if (spec.rarity === 'common') odds *= spec.hat === 'none' ? 1 : 0;
+    else odds *= 1 / HATS.length;
+  }
+  if (spec.shiny) odds *= 0.01;
+  return { odds, expectedIterations: odds > 0 ? Math.round(1 / odds) : Infinity };
+}
+
 export function searchSync(userId, query, maxResults = 25, maxIterations = 50_000_000) {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   const results = [];
